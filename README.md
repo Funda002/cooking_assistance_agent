@@ -1,6 +1,6 @@
 # 🍳 Kitchen Copilot
 
-A simple **AI cooking agent** that guides users through a recipe one step at a time.
+Kitchen Copilot is a simple **AI cooking agent** that guides a user through a recipe one step at a time.
 
 The user can ask questions, change ingredients, change serving size, set timers, and modify the recipe while cooking.
 
@@ -8,7 +8,7 @@ The user can ask questions, change ingredients, change serving size, set timers,
 
 ## 🎯 Project Goal
 
-Build a conversational cooking assistant that behaves like an **agent**, not just a chatbot.
+The goal is to build a conversational cooking assistant that behaves like an **AI agent**, not just a chatbot.
 
 Example:
 
@@ -16,9 +16,9 @@ Example:
 User → "I want to make masala chai for 5 people"
 
 Kitchen Copilot:
-→ Creates a recipe plan
+→ Creates a cooking plan
 → Tracks the current cooking step
-→ Remembers ingredient constraints
+→ Remembers user constraints
 → Answers questions
 → Modifies the plan when needed
 → Runs timers in the background
@@ -31,7 +31,7 @@ Kitchen Copilot:
 
 ## 1. LLM — Brain
 
-The **LLM** understands the user's natural-language requests and decides what the agent should do.
+The LLM understands natural-language requests and decides what the agent should do.
 
 Examples:
 
@@ -41,7 +41,7 @@ Examples:
 "Explain this step."
 ```
 
-The LLM decides whether to answer, modify the recipe, or use a tool.
+The LLM can decide to answer, modify the plan, or use a tool.
 
 ---
 
@@ -72,7 +72,7 @@ The plan can be modified during the conversation.
 
 ## 3. State — Where We Are
 
-State tracks the current progress of the cooking task.
+State tracks the user's progress through the recipe.
 
 ```python
 state = {
@@ -181,9 +181,9 @@ User:
 
 Reflection:
 → Plan no longer matches the user's requirement.
+→ Repair the plan.
+→ Verify the repaired plan.
 ```
-
-The agent repairs the plan and verifies it again.
 
 ---
 
@@ -204,7 +204,7 @@ The main agent follows this cycle:
       ANSWER   TOOL_CALL  MODIFY_PLAN
         │         │         │
         │         ▼         ▼
-        │       Tool       Plan
+        │        Tool       Plan
         │                   │
         └─────────┬─────────┘
                   ▼
@@ -218,7 +218,7 @@ The main agent follows this cycle:
 
 The important idea is:
 
-> **The LLM decides; Python executes and maintains the real state.**
+> **The LLM decides; Python executes actions and maintains the real state.**
 
 ---
 
@@ -229,7 +229,7 @@ The important idea is:
 - **gpt-5-nano**
 - **python-dotenv**
 - **Threading** for background timers
-- **JSON** for structured plans/state
+- **JSON** for structured plans and state
 
 ---
 
@@ -242,75 +242,162 @@ kitchen_agent/
 ├── tools.py         # Timer and tool registry
 ├── memory.py        # Memory manager
 ├── reflect.py       # Plan reflection
-├── .env             # API key
-├── .gitignore
+├── .env             # API key (do not commit)
+├── .gitignore       # Files excluded from Git
 └── README.md
 ```
 
 ---
 
-# ⚙️ Setup
+# ⚙️ Installation
 
-### 1. Create virtual environment
+## 1. Clone the repository
+
+```powershell
+git clone https://github.com/Funda002/cooking_assistance_agent.git
+cd cooking_assistance_agent
+```
+
+If you already have the project locally, simply open PowerShell in the project folder:
+
+```powershell
+cd "C:\Users\SRI SARVESH\Documents\kitchen_agent"
+```
+
+---
+
+## 2. Create a virtual environment
 
 ```powershell
 python -m venv myenv
 ```
 
-### 2. Activate it
+---
+
+## 3. Activate the virtual environment
+
+On Windows PowerShell:
 
 ```powershell
 .\myenv\Scripts\Activate.ps1
 ```
 
-### 3. Install dependencies
+You should see something similar to:
+
+```text
+(myenv) PS C:\Users\SRI SARVESH\Documents\kitchen_agent>
+```
+
+---
+
+## 4. Install dependencies
+
+Use:
 
 ```powershell
 python -m pip install openai python-dotenv
 ```
 
-### 4. Create `.env`
+Using `python -m pip` ensures the packages are installed into the active Python environment.
+
+---
+
+# 🔑 API Key Setup
+
+Kitchen Copilot uses the OpenAI API.
+
+Create a file named:
+
+```text
+.env
+```
+
+in the project root.
+
+Add:
 
 ```env
 OPENAI_API_KEY=your_api_key_here
 ```
 
-### 5. Run
+Replace `your_api_key_here` with your actual API key.
+
+### ⚠️ Important
+
+**Never commit `.env` to GitHub.**
+
+The `.gitignore` file should contain:
+
+```gitignore
+.env
+myenv/
+__pycache__/
+*.pyc
+```
+
+---
+
+# ▶️ How to Run
+
+After activating the virtual environment and setting your API key, run:
 
 ```powershell
 python main.py
 ```
 
+You should see:
+
+```text
+What would you like to cook?
+>
+```
+
+Enter a cooking request, for example:
+
+```text
+I want to make masala chai for 5 people
+```
+
+Kitchen Copilot will generate a cooking plan and show the first step.
+
 ---
 
-# 💬 Example
+# 💬 Example Conversation
 
 ```text
 What would you like to cook?
 
 > I want to make masala chai for 5 people
 
-→ Recipe plan generated
+Generated Plan:
+...
 
 🍳 Step 1:
 Gather the ingredients...
 
 > I don't have cardamom
 
-→ Plan modified
+🔄 Plan updated.
 
-> Set a timer for 2 minutes
+🍳 Step 1:
+...
+
+> done
+
+🍳 Step 2:
+...
+
+> set timer for 2 minutes
 
 ⏱️ Timer started
 
-> How much time is left?
+> how much time is left?
 
 ⏳ About 90 seconds left
 
 > done
 
-🍳 Step 2...
-
+🍳 Step 3:
 ...
 
 🎉 Cooking complete!
@@ -318,20 +405,20 @@ Gather the ingredients...
 
 ---
 
-# 🚀 Current Features
+# 🧪 Features
 
 - ✅ Recipe planning
-- ✅ Step-by-step guidance
+- ✅ Step-by-step cooking guidance
 - ✅ Conversational questions
 - ✅ State tracking
 - ✅ Memory
 - ✅ Ingredient substitutions
 - ✅ Serving-size changes
-- ✅ Plan modification
+- ✅ Dynamic plan modification
 - ✅ Plan reflection and verification
 - ✅ Background timers
 - ✅ Timer status
-- ✅ Natural conversation during timers
+- ✅ Conversation while timers run
 - ✅ Deterministic `next` / `done` handling
 
 ---
@@ -341,12 +428,12 @@ Gather the ingredients...
 - Streamlit frontend
 - More cooking tools
 - Persistent memory
-- Better structured outputs
+- Structured LLM outputs
 - Voice interaction
 - FastAPI backend
 - React frontend
 - Database-based state
-- More robust error handling
+- Better error handling
 
 ---
 
@@ -356,4 +443,4 @@ Kitchen Copilot demonstrates the fundamental architecture of an AI agent:
 
 **LLM + Plan + State + Memory + Tools + Control Loop + Reflection**
 
-The goal is to understand how these components work together to create a practical conversational agent.
+The project is intentionally kept simple so that each component of an AI agent can be understood and tested independently.
