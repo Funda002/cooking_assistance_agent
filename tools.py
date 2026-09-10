@@ -1,3 +1,5 @@
+# tools.py
+
 import threading
 import time
 import uuid
@@ -15,6 +17,8 @@ class TimerManager:
 
         self.lock = threading.Lock()
 
+        self.on_timer_finished = None
+
 
     # --------------------------------------------------
     # START TIMER
@@ -27,28 +31,46 @@ class TimerManager:
         step_id=None
     ):
 
-        timer_id = str(uuid.uuid4())[:8]
+        timer_id = str(
+            uuid.uuid4()
+        )[:8]
 
         start_time = time.monotonic()
 
+        cancel_event = threading.Event()
+
         timer_data = {
+
             "id": timer_id,
+
             "duration": seconds,
+
             "start_time": start_time,
+
             "purpose": purpose,
+
             "step_id": step_id,
+
             "status": "running",
-            "finished": False
+
+            "finished": False,
+
+            "cancel_event": cancel_event,
         }
 
         with self.lock:
 
-            self.timers[timer_id] = timer_data
+            self.timers[
+                timer_id
+            ] = timer_data
 
 
         thread = threading.Thread(
+
             target=self._run_timer,
+
             args=(timer_id,),
+
             daemon=True
         )
 
@@ -56,11 +78,17 @@ class TimerManager:
 
 
         return {
+
             "timer_id": timer_id,
+
             "status": "running",
+
             "duration_seconds": seconds,
+
             "purpose": purpose,
+
             "step_id": step_id,
+
             "message": (
                 f"Timer started for {seconds} seconds."
             )
@@ -71,34 +99,87 @@ class TimerManager:
     # BACKGROUND TIMER
     # --------------------------------------------------
 
-    def _run_timer(self, timer_id):
+    def _run_timer(
+        self,
+        timer_id
+    ):
 
         with self.lock:
 
-            timer = self.timers.get(timer_id)
+            timer = self.timers.get(
+                timer_id
+            )
 
             if timer is None:
                 return
 
-            seconds = timer["duration"]
-            purpose = timer["purpose"]
+            seconds = timer[
+                "duration"
+            ]
+
+            purpose = timer[
+                "purpose"
+            ]
+
+            cancel_event = timer[
+                "cancel_event"
+            ]
 
 
-        time.sleep(seconds)
+        # --------------------------------------------------
+        # WAIT
+        #
+        # Event.wait allows cancellation.
+        # --------------------------------------------------
 
+        cancelled = cancel_event.wait(
+            timeout=seconds
+        )
+
+        # --------------------------------------------------
+        # TIMER CANCELLED
+        # --------------------------------------------------
+
+        if cancelled:
+
+            return
+
+
+        # --------------------------------------------------
+        # MARK FINISHED
+        # --------------------------------------------------
 
         with self.lock:
 
-            timer = self.timers.get(timer_id)
+            timer = self.timers.get(
+                timer_id
+            )
 
             if timer is None:
                 return
 
-            timer["status"] = "finished"
-            timer["finished"] = True
+            # Safety check
+            if timer["status"] != "running":
+                return
+
+            timer[
+                "status"
+            ] = "finished"
+
+            timer[
+                "finished"
+            ] = True
+
+            finished_timer = timer.copy()
 
 
-        print("\n\n⏰ TIME'S UP!")
+        # --------------------------------------------------
+        # TERMINAL NOTIFICATION
+        # --------------------------------------------------
+
+        print(
+            "\n\n⏰ TIME'S UP!"
+        )
 
         print(
             f"Your {seconds}-second timer for "
@@ -110,19 +191,44 @@ class TimerManager:
         )
 
 
+        # --------------------------------------------------
+        # VOICE / EXTERNAL CALLBACK
+        # --------------------------------------------------
+
+        if self.on_timer_finished is not None:
+
+            try:
+
+                self.on_timer_finished(
+                    finished_timer
+                )
+
+            except Exception as e:
+
+                print(
+                    f"[Timer callback error] {e}"
+                )
+
+
     # --------------------------------------------------
     # GET TIMER STATUS
     # --------------------------------------------------
 
-    def get_status(self, timer_id=None):
+    def get_status(
+        self,
+        timer_id=None
+    ):
 
         with self.lock:
 
             if not self.timers:
 
                 return {
+
                     "status": "no_timer",
-                    "message": "No timers exist."
+
+                    "message":
+                        "No timers exist."
                 }
 
 
@@ -141,43 +247,233 @@ class TimerManager:
                 if timer is None:
 
                     return {
-                        "status": "not_found",
-                        "message": "Timer not found."
+
+                        "status":
+                            "not_found",
+
+                        "message":
+                            "Timer not found."
                     }
 
 
-            if timer["status"] == "finished":
+            if timer[
+                "status"
+            ] == "finished":
 
                 return {
-                    "timer_id": timer["id"],
-                    "status": "finished",
-                    "remaining_seconds": 0,
-                    "duration_seconds": timer["duration"],
-                    "purpose": timer["purpose"],
-                    "step_id": timer["step_id"]
+
+                    "timer_id":
+                        timer["id"],
+
+                    "status":
+                        "finished",
+
+                    "remaining_seconds":
+                        0,
+
+                    "duration_seconds":
+                        timer["duration"],
+
+                    "purpose":
+                        timer["purpose"],
+
+                    "step_id":
+                        timer["step_id"]
+                }
+
+
+            if timer[
+                "status"
+            ] == "cancelled":
+
+                return {
+
+                    "timer_id":
+                        timer["id"],
+
+                    "status":
+                        "cancelled",
+
+                    "remaining_seconds":
+                        0,
+
+                    "duration_seconds":
+                        timer["duration"],
+
+                    "purpose":
+                        timer["purpose"],
+
+                    "step_id":
+                        timer["step_id"]
                 }
 
 
             elapsed = (
                 time.monotonic()
-                - timer["start_time"]
+                -
+                timer["start_time"]
             )
 
             remaining = max(
+
                 0,
-                timer["duration"] - elapsed
+
+                timer["duration"]
+                -
+                elapsed
             )
 
 
             return {
-                "timer_id": timer["id"],
-                "status": "running",
-                "remaining_seconds": round(
-                    remaining
-                ),
-                "duration_seconds": timer["duration"],
-                "purpose": timer["purpose"],
-                "step_id": timer["step_id"]
+
+                "timer_id":
+                    timer["id"],
+
+                "status":
+                    "running",
+
+                "remaining_seconds":
+                    round(
+                        remaining
+                    ),
+
+                "duration_seconds":
+                    timer["duration"],
+
+                "purpose":
+                    timer["purpose"],
+
+                "step_id":
+                    timer["step_id"]
+            }
+
+
+    # --------------------------------------------------
+    # CANCEL TIMER
+    # --------------------------------------------------
+
+    def cancel_timer(
+        self,
+        timer_id=None
+    ):
+
+        with self.lock:
+
+            if not self.timers:
+
+                return {
+
+                    "status":
+                        "no_timer",
+
+                    "message":
+                        "There isn't an active timer."
+                }
+
+
+            # ----------------------------------------------
+            # If no ID is supplied, use the newest running
+            # timer.
+            # ----------------------------------------------
+
+            if timer_id is None:
+
+                running_timers = [
+
+                    timer
+                    for timer
+                    in self.timers.values()
+
+                    if timer[
+                        "status"
+                    ] == "running"
+                ]
+
+                if not running_timers:
+
+                    return {
+
+                        "status":
+                            "no_timer",
+
+                        "message":
+                            "There isn't an active timer."
+                    }
+
+                timer = running_timers[-1]
+
+            else:
+
+                timer = self.timers.get(
+                    timer_id
+                )
+
+                if timer is None:
+
+                    return {
+
+                        "status":
+                            "not_found",
+
+                        "message":
+                            "Timer not found."
+                    }
+
+
+            # ----------------------------------------------
+            # Already finished
+            # ----------------------------------------------
+
+            if timer[
+                "status"
+            ] == "finished":
+
+                return {
+
+                    "status":
+                        "already_finished",
+
+                    "timer_id":
+                        timer["id"],
+
+                    "message":
+                        "That timer has already finished."
+                }
+
+
+            # ----------------------------------------------
+            # Cancel
+            # ----------------------------------------------
+
+            timer[
+                "status"
+            ] = "cancelled"
+
+            timer[
+                "finished"
+            ] = False
+
+            timer[
+                "cancel_event"
+            ].set()
+
+
+            return {
+
+                "status":
+                    "cancelled",
+
+                "timer_id":
+                    timer["id"],
+
+                "purpose":
+                    timer["purpose"],
+
+                "step_id":
+                    timer["step_id"],
+
+                "message":
+                    "Timer cancelled."
             }
 
 
@@ -194,38 +490,96 @@ class TimerManager:
 
             for timer in self.timers.values():
 
-                if timer["status"] == "finished":
+                if timer[
+                    "status"
+                ] == "finished":
 
                     result.append({
-                        "timer_id": timer["id"],
-                        "status": "finished",
-                        "remaining_seconds": 0,
-                        "duration_seconds": timer["duration"],
-                        "purpose": timer["purpose"],
-                        "step_id": timer["step_id"]
+
+                        "timer_id":
+                            timer["id"],
+
+                        "status":
+                            "finished",
+
+                        "remaining_seconds":
+                            0,
+
+                        "duration_seconds":
+                            timer["duration"],
+
+                        "purpose":
+                            timer["purpose"],
+
+                        "step_id":
+                            timer["step_id"]
                     })
+
+
+                elif timer[
+                    "status"
+                ] == "cancelled":
+
+                    result.append({
+
+                        "timer_id":
+                            timer["id"],
+
+                        "status":
+                            "cancelled",
+
+                        "remaining_seconds":
+                            0,
+
+                        "duration_seconds":
+                            timer["duration"],
+
+                        "purpose":
+                            timer["purpose"],
+
+                        "step_id":
+                            timer["step_id"]
+                    })
+
 
                 else:
 
                     elapsed = (
                         time.monotonic()
-                        - timer["start_time"]
+                        -
+                        timer["start_time"]
                     )
 
                     remaining = max(
+
                         0,
-                        timer["duration"] - elapsed
+
+                        timer["duration"]
+                        -
+                        elapsed
                     )
 
                     result.append({
-                        "timer_id": timer["id"],
-                        "status": "running",
-                        "remaining_seconds": round(
-                            remaining
-                        ),
-                        "duration_seconds": timer["duration"],
-                        "purpose": timer["purpose"],
-                        "step_id": timer["step_id"]
+
+                        "timer_id":
+                            timer["id"],
+
+                        "status":
+                            "running",
+
+                        "remaining_seconds":
+                            round(
+                                remaining
+                            ),
+
+                        "duration_seconds":
+                            timer["duration"],
+
+                        "purpose":
+                            timer["purpose"],
+
+                        "step_id":
+                            timer["step_id"]
                     })
 
 
@@ -256,9 +610,20 @@ def timer(
     )
 
 
-def timer_status(timer_id=None):
+def timer_status(
+    timer_id=None
+):
 
     return timer_manager.get_status(
+        timer_id
+    )
+
+
+def cancel_timer(
+    timer_id=None
+):
+
+    return timer_manager.cancel_timer(
         timer_id
     )
 
@@ -269,8 +634,13 @@ def timer_status(timer_id=None):
 
 TOOLS = {
 
-    "timer": timer,
+    "timer":
+        timer,
 
-    "timer_status": timer_status
+    "timer_status":
+        timer_status,
+
+    "cancel_timer":
+        cancel_timer,
 
 }
