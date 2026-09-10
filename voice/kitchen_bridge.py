@@ -2,6 +2,7 @@
 
 import logging
 import re
+import threading
 
 from main import (
     create_plan,
@@ -19,6 +20,9 @@ from tools import timer_manager
 
 
 logger = logging.getLogger("kitchen_agent.voice.bridge")
+
+# BUILD 2: returned by stale work so the voice layer never speaks it.
+STALE_RESPONSE = "__KITCHEN_AGENT_STALE__"
 
 
 # ============================================================
@@ -163,6 +167,18 @@ class KitchenAgentBridge:
 
         self.started = False
 
+        # ========================================================
+        # BUILD 2: STALE-RESPONSE GENERATION
+        # ========================================================
+        #
+        # Every new voice turn gets a generation number.
+        # If a newer turn arrives, older work becomes stale.
+        #
+        self._generation = 0
+
+        # Protect generation checks together with state commits.
+        self._generation_lock = threading.RLock()
+
         logger.info(
             "KitchenAgentBridge initialized."
         )
@@ -224,7 +240,7 @@ class KitchenAgentBridge:
     # START RECIPE
     # ========================================================
 
-    def _start_recipe(self, user_message):
+    def _start_recipe(self, user_message, generation=None):
 
         client = self._get_client()
 
@@ -233,45 +249,67 @@ class KitchenAgentBridge:
             user_message
         )
 
-        self.plan = create_plan(
+        new_plan = create_plan(
             client,
             user_message
         )
 
-        if not self.plan:
+        # Never commit a recipe created for an older turn.
+        if generation is not None and not self.is_generation_current(generation):
+            logger.warning(
+                "BUILD 2 → Discarding stale recipe generation %s",
+                generation,
+            )
+            return STALE_RESPONSE
 
+        if not new_plan:
             return (
                 "I couldn't create the recipe plan. "
                 "Please try again."
             )
 
-        if not self.plan.get("steps"):
-
+        if not new_plan.get("steps"):
             return (
                 "I couldn't find any cooking steps "
                 "for that recipe."
             )
 
-        # ----------------------------------------------------
-        # Initialize state.
-        # ----------------------------------------------------
+        first_step_id = new_plan["steps"][0]["id"]
 
-        first_step_id = self.plan[
-            "steps"
-        ][0]["id"]
+        # Atomic generation check + state commit.
+        # A newer turn cannot invalidate this between the check and commit.
+        if generation is not None:
+            with self._generation_lock:
+                if generation != self._generation:
+                    logger.warning(
+                        "BUILD 2 → Discarding stale recipe generation %s before state commit",
+                        generation,
+                    )
+                    return STALE_RESPONSE
 
-        self.state = {
-            "status": "cooking",
-            "current_step_id": first_step_id,
-            "completed_steps": [],
-        }
-
-        self.session_memory = {
-            "recipe_started": True,
-            "servings": self.plan.get("servings"),
-        }
-
-        self.started = True
+                self.plan = new_plan
+                self.state = {
+                    "status": "cooking",
+                    "current_step_id": first_step_id,
+                    "completed_steps": [],
+                }
+                self.session_memory = {
+                    "recipe_started": True,
+                    "servings": new_plan.get("servings"),
+                }
+                self.started = True
+        else:
+            self.plan = new_plan
+            self.state = {
+                "status": "cooking",
+                "current_step_id": first_step_id,
+                "completed_steps": [],
+            }
+            self.session_memory = {
+                "recipe_started": True,
+                "servings": new_plan.get("servings"),
+            }
+            self.started = True
 
         logger.info(
             "Recipe created: %s",
@@ -464,7 +502,14 @@ class KitchenAgentBridge:
     # NEXT STEP
     # ========================================================
 
-    def _advance(self):
+    def _advance(self, generation=None):
+
+        if generation is not None and not self.is_generation_current(generation):
+            logger.warning(
+                "BUILD 2 → Discarding stale advance generation %s",
+                generation,
+            )
+            return STALE_RESPONSE
 
         if not self.plan:
 
@@ -496,7 +541,14 @@ class KitchenAgentBridge:
     # DONE
     # ========================================================
 
-    def _done(self):
+    def _done(self, generation=None):
+
+        if generation is not None and not self.is_generation_current(generation):
+            logger.warning(
+                "BUILD 2 → Discarding stale done generation %s",
+                generation,
+            )
+            return STALE_RESPONSE
 
         if not self.plan:
 
@@ -728,10 +780,57 @@ class KitchenAgentBridge:
             )
 
     # ========================================================
+    # BUILD 2: GENERATION CONTROL
+    # ========================================================
+
+    def start_generation(self):
+        """
+        Start a new logical voice turn.
+
+        Any older generation is now considered stale.
+        """
+        with self._generation_lock:
+            self._generation += 1
+            generation = self._generation
+
+        logger.info(
+            "BUILD 2 → Started generation %s",
+            generation
+        )
+
+        return generation
+
+    def is_generation_current(self, generation):
+        """
+        Check whether this generation is still the latest turn.
+        """
+        with self._generation_lock:
+            return generation == self._generation
+
+    def invalidate_generation(self, reason=""):
+        """
+        Invalidate all work belonging to the previous voice turn.
+
+        This is logical cancellation/fencing: Python worker threads are not
+        forcibly killed, but stale work is prevented from being committed or
+        spoken after a newer turn arrives.
+        """
+        with self._generation_lock:
+            self._generation += 1
+            new_generation = self._generation
+
+        logger.warning(
+            "BUILD 2 → Invalidated generation; now %s (%s)",
+            new_generation,
+            reason or "newer user turn",
+        )
+        return new_generation
+
+    # ========================================================
     # MAIN PROCESS FUNCTION
     # ========================================================
 
-    def process(self, user_message):
+    def process(self, user_message, generation=None):
 
         try:
 
@@ -745,6 +844,13 @@ class KitchenAgentBridge:
                     "Sorry, I didn't catch that."
                 )
 
+            if generation is not None and not self.is_generation_current(generation):
+                logger.warning(
+                    "BUILD 2 → Ignoring stale request generation %s",
+                    generation,
+                )
+                return STALE_RESPONSE
+
             logger.info(
                 "Processing voice input: %s",
                 user_message
@@ -757,7 +863,8 @@ class KitchenAgentBridge:
             if self.plan is None:
 
                 return self._start_recipe(
-                    user_message
+                    user_message,
+                    generation,
                 )
 
             # =================================================
@@ -774,6 +881,9 @@ class KitchenAgentBridge:
                 logger.info(
                     "Deterministic timer cancellation."
                 )
+
+                if generation is not None and not self.is_generation_current(generation):
+                    return STALE_RESPONSE
 
                 return self._cancel_timer()
 
@@ -797,7 +907,7 @@ class KitchenAgentBridge:
                     "Deterministic next command."
                 )
 
-                return self._advance()
+                return self._advance(generation)
 
             # =================================================
             # 4. DONE COMMAND
@@ -811,7 +921,7 @@ class KitchenAgentBridge:
                     "Deterministic done command."
                 )
 
-                return self._done()
+                return self._done(generation)
 
             # =================================================
             # 5. REMAINING STEPS
@@ -853,6 +963,13 @@ class KitchenAgentBridge:
 
             client = self._get_client()
 
+            if generation is not None and not self.is_generation_current(generation):
+                logger.warning(
+                    "BUILD 2 → Discarding stale generation %s before LLM decision",
+                    generation,
+                )
+                return STALE_RESPONSE
+
             decision = decide_action(
                 client,
                 self.plan,
@@ -865,6 +982,13 @@ class KitchenAgentBridge:
                 "Kitchen decision: %s",
                 decision
             )
+
+            if generation is not None and not self.is_generation_current(generation):
+                logger.warning(
+                    "BUILD 2 → Discarding stale generation %s after LLM decision",
+                    generation,
+                )
+                return STALE_RESPONSE
 
             action = decision.get(
                 "action"
@@ -902,6 +1026,13 @@ class KitchenAgentBridge:
 
             if action == "COMPLETE_STEP":
 
+                if generation is not None and not self.is_generation_current(generation):
+                    logger.warning(
+                        "BUILD 2 → Discarding stale COMPLETE_STEP generation %s",
+                        generation,
+                    )
+                    return STALE_RESPONSE
+
                 next_step = advance_step(
                     self.plan,
                     self.state
@@ -923,6 +1054,13 @@ class KitchenAgentBridge:
 
             if action == "TOOL_CALL":
 
+                if generation is not None and not self.is_generation_current(generation):
+                    logger.warning(
+                        "BUILD 2 → Discarding stale TOOL_CALL generation %s before execution",
+                        generation,
+                    )
+                    return STALE_RESPONSE
+
                 result = execute_tool(
                     decision,
                     self.state
@@ -931,6 +1069,13 @@ class KitchenAgentBridge:
                 tool_name = decision.get(
                     "tool"
                 )
+
+                if generation is not None and not self.is_generation_current(generation):
+                    logger.warning(
+                        "BUILD 2 → Tool result became stale for generation %s",
+                        generation,
+                    )
+                    return STALE_RESPONSE
 
                 # -----------------------------
                 # TIMER STATUS
@@ -997,25 +1142,53 @@ class KitchenAgentBridge:
                     old_current_step_id
                 )
 
+                if generation is not None and not self.is_generation_current(generation):
+                    logger.warning(
+                        "BUILD 2 → Discarding stale MODIFY_PLAN generation %s",
+                        generation,
+                    )
+                    return STALE_RESPONSE
+
                 # ---------------------------------------------
                 # Modify existing plan.
                 # ---------------------------------------------
 
-                self.plan = modify_plan(
+                # Build the candidate plan first. Do not mutate the live
+                # plan until we have re-checked the generation.
+                candidate_plan = modify_plan(
                     self.plan,
                     decision
                 )
+
+                if generation is not None:
+                    with self._generation_lock:
+                        if generation != self._generation:
+                            logger.warning(
+                                "BUILD 2 → Discarding stale MODIFY_PLAN generation %s before state commit",
+                                generation,
+                            )
+                            return STALE_RESPONSE
+
+                        self.plan = candidate_plan
+
+                        self._protect_state_after_plan_change(
+                            old_current_step_id,
+                            old_completed_steps
+                        )
+                else:
+                    self.plan = candidate_plan
+
+                    self._protect_state_after_plan_change(
+                        old_current_step_id,
+                        old_completed_steps
+                    )
 
                 # ---------------------------------------------
                 # CRITICAL:
                 #
                 # Restore/protect cooking state.
+                # The live plan/state were already committed atomically above.
                 # ---------------------------------------------
-
-                self._protect_state_after_plan_change(
-                    old_current_step_id,
-                    old_completed_steps
-                )
 
                 logger.info(
                     "State after modification: current=%s completed=%s",
@@ -1026,6 +1199,13 @@ class KitchenAgentBridge:
                         "completed_steps"
                     )
                 )
+
+                if generation is not None and not self.is_generation_current(generation):
+                    logger.warning(
+                        "BUILD 2 → Plan modification became stale for generation %s",
+                        generation,
+                    )
+                    return STALE_RESPONSE
 
                 return self._voice_plan_modified(
                     decision

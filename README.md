@@ -1,1170 +1,547 @@
-# 🍳 Kitchen Agent
+# 🍳 Kitchen Agent --- Voice-Native AI Cooking Assistant
 
-A local-first, voice-enabled AI cooking assistant that helps users plan and execute recipes conversationally.
+A local-first AI cooking assistant that helps users plan, modify, and
+execute recipes through natural conversation.
 
-## Project Evolution
+The project evolved from a terminal-based cooking agent into a real-time
+voice-native AI agent using LiveKit, Deepgram, OpenAI, and Rime TTS.
 
-Kitchen Agent was built in two stages:
+------------------------------------------------------------------------
 
-1. **Terminal Kitchen Agent** — the original text-based cooking agent built from scratch.
-2. **Voice Kitchen Agent** — a voice interface built on top of the existing Kitchen Agent using LiveKit, Deepgram, Silero VAD, OpenAI, and Rime TTS.
+# Demo Video
 
-> **Core principle:** The Kitchen Agent remains the cooking brain. Voice is an interface layer.
+Demo implementation:
 
-The voice system converts speech to text, sends the request to the existing Kitchen Agent, and converts the response back into speech.
+https://www.youtube.com/watch?v=LYvaa4Skau0&t=23s
 
----
+------------------------------------------------------------------------
 
-## Current Status
+# Project Overview
 
-**Milestone: Kitchen Agent V1**
+Most cooking assistants only answer recipe questions.
 
-V1 supports:
+Kitchen Agent is designed as an **AI Agent** that can:
 
-- Recipe planning
-- Cooking state tracking
-- Step-by-step guidance
-- Natural `next` / `done` navigation
-- Cooking questions during a recipe
-- Ingredient substitutions
-- Recipe-plan modification
-- Timers
-- Timer status
-- Timer cancellation
-- Automatic voice timer-expiry announcements
-- Voice interruptions / barge-in
-- Recipe completion
-- Terminal and voice interfaces
+-   Understand cooking goals
+-   Create a recipe plan
+-   Maintain cooking state
+-   Adapt recipes when ingredients change
+-   Execute tools such as timers
+-   Guide users step-by-step through voice interaction
 
-Known V1 limitations are documented below.
+The core idea:
 
----
+    Interface
+        ↓
+    Kitchen Agent Brain
+        ↓
+    Plan + State + Tools
+        ↓
+    User Guidance
 
-# Architecture
+------------------------------------------------------------------------
 
-## Core Concepts
+# Project Evolution
 
-Kitchen Agent is built around:
+## Build 1 --- Terminal AI Cooking Agent
 
-```text
-PLAN
-STATE
-MEMORY
-TOOLS
-REFLECTION
-```
+The first version was built as a text-based cooking agent.
 
-### PLAN
+The engineering challenge:
 
-The recipe plan describes what should happen.
+> How do we make an LLM follow a cooking process instead of behaving
+> like a normal chatbot?
 
-```text
-Step 1 → Prepare ingredients
-Step 2 → Heat pan
-Step 3 → Add ingredients
-Step 4 → Cook
-Step 5 → Serve
-```
+Solution:
 
-### STATE
+The cooking brain was separated into:
 
-State tracks where the user currently is.
+    PLAN
+    STATE
+    MEMORY
+    TOOLS
+    REFLECTION
+
+The agent maintains:
+
+-   Current recipe
+-   Current cooking step
+-   Completed steps
+-   Ingredient changes
+-   Tool execution state
 
 Example:
 
-```text
-current_step = 3
-completed_steps = [1, 2]
-status = cooking
-```
+    User:
+    Done.
 
-State is important because the LLM should not be trusted to remember cooking progress purely from conversation.
+    Python Backend:
+    advance_step()
 
-### MEMORY
+    STATE:
+    Step 2 → Step 3
 
-`memory.py` contains the project's memory functionality for retaining useful information.
+    Agent:
+    Add the vegetables next.
 
-The current voice V1 bridge deliberately keeps the active voice flow focused on PLAN + STATE rather than adding an extra memory-extraction LLM call on every turn.
+Deterministic actions are handled by Python instead of allowing the LLM
+to randomly change state.
 
-### TOOLS
+------------------------------------------------------------------------
+
+# Build 2 --- Voice Native AI Agent
+
+The second engineering challenge:
+
+> How do we convert an existing reasoning agent into a real-time voice
+> assistant?
+
+Solution:
+
+The cooking intelligence was kept independent.
+
+Voice became an interface layer.
+
+Architecture:
+
+    User Voice
+        ↓
+    LiveKit Agent
+        ↓
+    Silero VAD
+        ↓
+    Deepgram STT
+        ↓
+    Kitchen Agent Backend
+        ↓
+    Rime TTS
+        ↓
+    User Voice Response
+
+The voice layer provides:
+
+-   Speech recognition
+-   Natural voice responses
+-   Interruptions / barge-in
+-   Timer announcements
+
+The cooking brain remains the same.
+
+------------------------------------------------------------------------
+
+# Agent Architecture
+
+                     USER
+                      |
+                      |
+                 Voice / Text
+                      |
+                      ↓
+              Kitchen Agent Core
+                      |
+         ---------------------------
+         |          |              |
+        PLAN      STATE          TOOLS
+         |          |              |
+         ---------------------------
+                      |
+                 RESPONSE
+                      |
+                 Voice Output
+
+------------------------------------------------------------------------
+
+# Agent Components
+
+## PLAN
+
+Creates the cooking workflow.
+
+Example:
+
+    Step 1 → Prepare ingredients
+    Step 2 → Heat pan
+    Step 3 → Cook vegetables
+    Step 4 → Add eggs
+    Step 5 → Serve
+
+------------------------------------------------------------------------
+
+## STATE
+
+Tracks where the user currently is.
+
+Example:
+
+    current_step = 3
+
+    completed_steps:
+    [1,2]
+
+    status:
+    cooking
+
+This prevents the agent from losing progress.
+
+------------------------------------------------------------------------
+
+## TOOLS
 
 Tools perform deterministic actions.
 
-Current tools include:
+Current tools:
 
-```text
-timer
-timer_status
-cancel_timer
-```
+    timer()
+    timer_status()
+    cancel_timer()
 
-### REFLECTION
+Timer behaviour:
 
-`reflect.py` contains reflection and validation functionality intended to check whether a recipe plan remains logically consistent after changes.
+    User:
+    Set timer for 60 seconds
 
----
+            ↓
 
-# Agent Loop
+    Timer runs independently
 
-```text
-USER
-  ↓
-LLM decides action
-  ↓
-PYTHON BACKEND
-  ↓
-PLAN / STATE / TOOLS / REFLECTION
-  ↓
-Response
-  ↓
-USER
-```
+            ↓
 
-Deterministic navigation commands such as:
+    Time expires
 
-```text
-next
-done
-continue
-```
+            ↓
 
-are handled by Python rather than relying on the LLM to invent state transitions.
+    Voice announcement:
 
-Example:
+    Your timer is finished.
 
-```text
-User:
-"Done."
+------------------------------------------------------------------------
 
-        ↓
+# Features
 
-Python:
-advance_step()
+## Cooking Intelligence
 
-        ↓
-
-STATE changes
-
-        ↓
-
-Agent:
-"Step 5. Add the vegetables."
-```
-
----
-
-# Terminal vs Voice
-
-## Terminal Agent
-
-The original interface:
-
-```text
-User types
-   ↓
-Kitchen Agent
-   ↓
-Text response
-   ↓
-Terminal
-```
-
-Run it with:
-
-```powershell
-python main.py
-```
-
-The terminal version is especially useful for development, debugging, inspecting state, and testing the core cooking logic.
-
----
+✅ Recipe planning\
+✅ Step-by-step guidance\
+✅ Ingredient substitutions\
+✅ Recipe modification\
+✅ Cooking questions\
+✅ Serving size changes\
+✅ Cooking completion tracking
 
 ## Voice Agent
 
-The voice interface:
+✅ Real-time speech interaction\
+✅ Natural voice output\
+✅ Interruptions\
+✅ Background timer announcements
 
-```text
-User speaks
-   ↓
-LiveKit / VAD
-   ↓
-Deepgram STT
-   ↓
-Existing Kitchen Agent
-   ↓
-Rime TTS
-   ↓
-User hears response
-```
-
-The voice agent is not a second cooking agent. It is an interface around the existing backend.
-
----
-
-# Voice Architecture
-
-```text
-                    VOICE AGENT
-                         │
-                         ▼
-                    MICROPHONE
-                         │
-                         ▼
-                LiveKit / Silero VAD
-                         │
-                         ▼
-                    Deepgram STT
-                         │
-                         ▼
-              KitchenAgentBridge
-                         │
-                         ▼
-              EXISTING KITCHEN AGENT
-                         │
-              ┌──────────┼──────────┐
-              │          │          │
-             PLAN      STATE      TOOLS
-              │          │          │
-              └──────────┼──────────┘
-                         │
-                         ▼
-                      Response
-                         │
-                         ▼
-                     Rime TTS
-                         │
-                         ▼
-                     SPEAKER
-```
-
----
+------------------------------------------------------------------------
 
 # Project Structure
 
-```text
-kitchen_agent/
-│
-├── main.py
-├── tools.py
-├── memory.py
-├── reflect.py
-├── requirements.txt
-├── README.md
-├── .env
-├── .gitignore
-│
-└── voice/
-    ├── __init__.py
-    ├── rime_tts.py
-    ├── voice_shell.py
-    └── kitchen_bridge.py
-```
+    kitchen_agent/
 
----
+    ├── main.py
+    ├── tools.py
+    ├── memory.py
+    ├── reflect.py
+    ├── requirements.txt
+    ├── README.md
 
-# File Guide
+    └── voice/
+        ├── __init__.py
+        ├── voice_shell.py
+        ├── kitchen_bridge.py
+        └── rime_tts.py
 
-## `main.py`
+------------------------------------------------------------------------
 
-The main Kitchen Agent backend.
+# Important Files
 
-It contains the core recipe orchestration logic, including:
+## main.py
 
-- Recipe-plan creation
-- Current-step lookup
-- Step advancement
-- Navigation-command detection
-- LLM action decisions
-- Tool execution
-- Recipe-plan modification
-- Timer-response formatting
-- Plan validation and repair
-- Original terminal-agent loop
+The main cooking intelligence.
 
-This is the main cooking brain.
+Responsible for:
 
-**Do not modify it casually when working only on the voice interface.**
+-   Recipe planning
+-   State management
+-   Step navigation
+-   Tool execution
+-   Recipe modification
 
----
+------------------------------------------------------------------------
 
-## `tools.py`
+## tools.py
 
-Contains deterministic tools.
+Contains deterministic tools:
 
-The V1 timer system provides:
+-   Timer manager
+-   Timer status
+-   Timer cancellation
+-   Timer callbacks
 
-```text
-TimerManager
-timer()
-timer_status()
-cancel_timer()
-```
+------------------------------------------------------------------------
 
-Timers:
+## memory.py
 
-- Run in background threads
-- Track their own state
-- Report remaining time
-- Support cancellation
-- Detect completion
-- Trigger `on_timer_finished`
+Contains memory-related functionality.
 
-The voice layer uses the timer callback to announce completion automatically.
+The current version focuses on useful active cooking context instead of
+unnecessary memory extraction.
 
----
+------------------------------------------------------------------------
 
-## `memory.py`
+## reflect.py
 
-Contains the project's memory functionality.
+Contains validation logic for checking recipe consistency after
+modifications.
 
-It is intended for useful information that may need to persist beyond an immediate decision.
+------------------------------------------------------------------------
 
-The current voice V1 bridge avoids adding a separate memory-extraction call to every voice turn to reduce unnecessary latency and API usage.
-
----
-
-## `reflect.py`
-
-Contains reflection / validation logic.
-
-It is intended to check recipe-plan consistency and help repair invalid plans after modifications.
-
-This becomes important when users change:
-
-- Ingredients
-- Quantities
-- Serving sizes
-- Cooking constraints
-- Recipe steps
-
----
-
-## `voice/__init__.py`
-
-Makes `voice` a Python package so modules can be imported using:
-
-```python
-from voice.rime_tts import RimeTTS
-```
-
----
-
-## `voice/rime_tts.py`
-
-Rime text-to-speech integration.
-
-```text
-Text
- ↓
-Rime
- ↓
-Audio
-```
-
-API credentials must remain in `.env`.
-
-Never hard-code credentials here.
-
----
-
-## `voice/voice_shell.py`
+## voice/voice_shell.py
 
 Main voice interface.
 
 Connects:
 
-- LiveKit
-- Silero VAD
-- Deepgram STT
-- OpenAI LiveKit integration
-- Rime TTS
-- KitchenAgentBridge
+-   LiveKit
+-   Silero VAD
+-   Deepgram STT
+-   OpenAI
+-   Rime TTS
 
 Responsibilities:
 
-- Starts voice sessions
-- Handles speech recognition
-- Starts TTS
-- Provides the initial greeting
-- Enables interruptions / barge-in
-- Connects timer completion events to spoken announcements
+-   Starts voice sessions
+-   Handles speech
+-   Provides greeting
+-   Handles interruptions
+-   Announces timer completion
 
-The greeting is deliberately handled here rather than passed to recipe creation.
+------------------------------------------------------------------------
 
----
+## voice/kitchen_bridge.py
 
-## `voice/kitchen_bridge.py`
+Connects the voice layer with the cooking backend.
 
-Adapter between the voice interface and the existing Kitchen Agent.
+It allows the same Kitchen Agent brain to work with voice.
 
-It calls existing backend functions such as:
-
-```python
-create_plan()
-get_current_step()
-advance_step()
-decide_action()
-execute_tool()
-modify_plan()
-```
-
-It also provides voice-specific behavior such as:
-
-- Natural next-command detection
-- Timer cancellation detection
-- Voice text cleanup
-- Shortening long responses
-- Current-step speech
-- State preservation after plan modifications
-
-It is **not** intended to be a second cooking engine.
-
----
-
-## `.env`
-
-Stores private credentials and configuration.
-
-Example:
-
-```env
-OPENAI_API_KEY=YOUR_KEY_HERE
-
-LIVEKIT_URL=YOUR_LIVEKIT_URL
-LIVEKIT_API_KEY=YOUR_LIVEKIT_API_KEY
-LIVEKIT_API_SECRET=YOUR_LIVEKIT_API_SECRET
-
-DEEPGRAM_API_KEY=YOUR_DEEPGRAM_API_KEY
-
-rime_test_api=YOUR_RIME_API_KEY
-RIME_BASE_URL=YOUR_RIME_BASE_URL
-RIME_SPEAKER=YOUR_RIME_SPEAKER
-```
-
-Use real credentials locally.
-
-**Never commit `.env` to GitHub.**
-
----
-
-## `.gitignore`
-
-Keeps secrets, virtual environments, caches, and other unnecessary files out of Git.
-
-At minimum, `.env` and the virtual environment should be ignored.
-
----
-
-## `requirements.txt`
-
-Contains the Python dependencies required by the project.
-
-The V1 voice stack includes packages for:
-
-- LiveKit
-- LiveKit Agents
-- Deepgram
-- Silero
-- OpenAI
-- Rime integration dependencies
-- Python dotenv
-
-Install with:
-
-```powershell
-pip install -r requirements.txt
-```
-
----
+------------------------------------------------------------------------
 
 # Installation
 
-## 1. Clone the repository
+Clone:
 
-```powershell
-git clone https://github.com/Funda002/cooking_assistance_agent.git
-cd cooking_assistance_agent
-```
+    git clone https://github.com/Funda002/cooking_assistance_agent.git
 
-## 2. Create the virtual environment
+    cd cooking_assistance_agent
 
-On Windows:
+Create environment:
 
-```powershell
-python -m venv myenv
-```
+    python -m venv myenv
 
 Activate:
 
-```powershell
-.\myenv\Scripts\Activate.ps1
-```
+Windows:
 
-If PowerShell blocks activation:
+    .\myenv\Scripts\Activate.ps1
 
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
+Install dependencies:
 
-Then activate again:
+    pip install -r requirements.txt
 
-```powershell
-.\myenv\Scripts\Activate.ps1
-```
+------------------------------------------------------------------------
 
-## 3. Install dependencies
-
-```powershell
-pip install -r requirements.txt
-```
-
-Verify:
-
-```powershell
-pip list
-```
-
----
-
-# Environment Configuration
+# Environment Setup
 
 Create:
 
-```text
-.env
-```
+    .env
 
-in the project root:
+Add:
 
-```text
-kitchen_agent/
-├── .env
-├── main.py
-├── tools.py
-└── voice/
-```
+    OPENAI_API_KEY=
 
-Add your actual credentials.
+    LIVEKIT_URL=
+    LIVEKIT_API_KEY=
+    LIVEKIT_API_SECRET=
 
-Never paste real API keys into GitHub, README files, screenshots, source code, or logs.
+    DEEPGRAM_API_KEY=
 
----
+    rime_test_api=
 
-# Running the Terminal Agent
+Never upload API keys.
 
-Activate the environment:
+------------------------------------------------------------------------
 
-```powershell
-cd C:\Users\SRI SARVESH\Documents\kitchen_agent
-.\myenv\Scripts\Activate.ps1
-```
+# Running the Project
+
+## 1. Terminal Agent
 
 Run:
 
-```powershell
-python main.py
-```
+    python main.py
 
 Example:
 
-```text
-You: I want to make an omelet.
+    User:
+    I want to make an omelette.
 
-Agent:
-Step 1. Crack the eggs and add salt and pepper.
-```
+    Agent:
+    Step 1. Crack the eggs and add seasoning.
 
----
+------------------------------------------------------------------------
 
-# Running the Voice Agent
+## 2. Voice Agent
 
-Activate the environment:
+Run:
 
-```powershell
-cd C:\Users\SRI SARVESH\Documents\kitchen_agent
-.\myenv\Scripts\Activate.ps1
-```
+    python voice/voice_shell.py dev
 
-Start the LiveKit development worker:
+The agent starts with:
 
-```powershell
-python voice/voice_shell.py dev
-```
+    Hey! What would you like to cook today?
 
-If the installed LiveKit Agents version uses different CLI options:
+Then users can speak naturally.
 
-```powershell
-python voice/voice_shell.py --help
-```
+------------------------------------------------------------------------
 
-The worker should start and connect to the configured LiveKit project.
+## 3. Evidence Testing
 
-Connect to the corresponding LiveKit development room/interface configured for the project.
+Run:
 
----
+    python evidence_logger.py test1
 
-# Voice Session Startup
+Examples:
 
-When the voice session starts, the agent should first say:
+    python evidence_logger.py test1
+    python evidence_logger.py test2
+    python evidence_logger.py test3
 
-```text
-Hey! What would you like to cook today?
-```
+These capture engineering validation runs.
 
-The greeting belongs to the voice layer and should not be sent through recipe creation.
+------------------------------------------------------------------------
 
-Then:
+# Testing Performed
 
-```text
-User:
-I want to make tomato pasta.
-```
+## Test 1 --- Normal Cooking Flow
 
-The Kitchen Agent creates the plan and initializes cooking state.
+Verified:
 
----
+-   Recipe creation
+-   Step navigation
+-   Cooking guidance
 
-# Cooking Flow
+------------------------------------------------------------------------
 
-```text
-User request
-   ↓
-create_plan()
-   ↓
-PLAN created
-   ↓
-STATE → Step 1
-   ↓
-Voice speaks current step
-```
+## Test 2 --- Voice Interruption
 
-The user can then ask questions or modify the recipe.
+Verified:
 
----
+-   User interruption
+-   Generation cancellation
+-   Conversation recovery
 
-# Plan Modification
+------------------------------------------------------------------------
 
-Example:
+## Test 3 --- Timer Workflow
 
-```text
-Current:
-Step 4
+Verified:
 
-User:
-"I don't have butter. Can I use oil?"
+-   Timer creation
+-   Background execution
+-   Timer events during conversation
 
-        ↓
+------------------------------------------------------------------------
 
-LLM:
-MODIFY_PLAN
+# Engineering Challenges Solved
 
-        ↓
+## Challenge 1: Maintaining Cooking State
 
-modify_plan()
+Problem:
 
-        ↓
+LLMs can lose track of steps.
 
-State protection
+Solution:
 
-        ↓
+External state management using Python.
 
-Current step remains Step 4
-```
+------------------------------------------------------------------------
 
-Changing the recipe should not unexpectedly send the user back to Step 1.
+## Challenge 2: Making Voice Agent Reliable
 
----
+Problem:
 
-# Deterministic Navigation
+Voice assistants need interruption handling and low latency.
 
-Commands such as:
+Solution:
 
-```text
-next
-done
-continue
-what's next
-let's continue
-```
+Separated voice interface from cooking intelligence.
 
-are handled deterministically where possible.
+------------------------------------------------------------------------
 
-Example:
+## Challenge 3: Real-Time Actions
 
-```text
-User:
-"Done."
+Problem:
 
-        ↓
+Cooking requires actions that happen later.
 
-advance_step(plan, state)
+Solution:
 
-        ↓
+Implemented deterministic tools such as timers.
 
-Step 3 → Step 4
-```
+------------------------------------------------------------------------
 
----
+# Known Limitations
 
-# Timer System
+-   Complex recipe modifications may require deeper validation.
+-   Very long spoken summaries can be shortened further.
+-   More advanced long-term personalization can be added later.
 
-Timers are deterministic and run independently from the conversation.
+------------------------------------------------------------------------
 
-```text
-User:
-"Set a timer for 60 seconds."
+# Future Improvements
 
-        ↓
+-   Vision-based ingredient detection
+-   Kitchen camera integration
+-   Personalized cooking preferences
+-   Better recipe knowledge base
+-   Multi-language voice support
 
-timer()
+------------------------------------------------------------------------
 
-        ↓
+# Quick Commands
 
-Background timer
+Terminal:
 
-        ↓
+    python main.py
 
-60 seconds pass
+Voice:
 
-        ↓
+    python voice/voice_shell.py dev
 
-on_timer_finished
+Install:
 
-        ↓
+    pip install -r requirements.txt
 
-LiveKit session.say()
+Git:
 
-        ↓
+    git add .
+    git commit -m "update README"
+    git push origin main
 
-Rime TTS
-
-        ↓
-
-"Your 60-second timer is finished."
-```
-
-The user can continue talking while the timer is running.
-
-The timer supports:
-
-```text
-How much time is left?
-```
-
-and:
-
-```text
-Cancel the timer.
-```
-
----
-
-# Voice-Native Design Principles
-
-The voice agent should:
-
-- Speak naturally
-- Keep normal responses short
-- Give one cooking step at a time
-- Avoid reading the whole recipe unnecessarily
-- Avoid Markdown
-- Avoid bullets in spoken responses
-- Answer general questions briefly
-- Avoid repeating previous steps unless requested
-- Never claim a cooking step was completed unless the backend completed it
-- Never invent cooking state
-
-Safety-critical explanations may need to be longer.
-
----
-
-# Testing
-
-## Basic Test
-
-### Greeting
-
-Expected:
-
-```text
-Hey! What would you like to cook today?
-```
-
-### Recipe creation
-
-Say:
-
-```text
-I want to make vegetable fried rice.
-```
-
-Expected:
-
-```text
-Plan created
-STATE → Step 1
-```
-
-### Ingredients
-
-Say:
-
-```text
-What ingredients do I need?
-```
-
-### Summary
-
-Say:
-
-```text
-Can you give me a quick summary of the whole recipe?
-```
-
-### Substitution
-
-Say:
-
-```text
-I don't have bell pepper. Can I replace it?
-```
-
-Check that the plan changes without losing cooking progress.
-
-### Question
-
-Say:
-
-```text
-Why do we cook the vegetables first?
-```
-
-The recipe should not advance just because a question was asked.
-
-### Navigation
-
-Try:
-
-```text
-What's next?
-```
-
-```text
-Continue.
-```
-
-```text
-Done.
-```
-
-Each should advance appropriately.
-
-### Timer
-
-Say:
-
-```text
-Set a timer for 10 seconds.
-```
-
-Wait without saying anything.
-
-Expected:
-
-```text
-Your 10-second timer is finished.
-```
-
-### Completion
-
-Continue until the final step.
-
-Expected:
-
-```text
-Great job. Your dish is complete!
-```
-
----
-
-# Full Realistic V1 Test
-
-A strong end-to-end test should cover:
-
-```text
-Greeting
- ↓
-Recipe creation
- ↓
-Ingredient list
- ↓
-Recipe summary
- ↓
-Substitution
- ↓
-Impossible modification
- ↓
-Serving / quantity constraint
- ↓
-Begin cooking
- ↓
-Cooking question
- ↓
-Next / Done
- ↓
-Timer
- ↓
-Timer status
- ↓
-Timer expiry
- ↓
-Continue
- ↓
-Another modification
- ↓
-Completion
-```
-
----
-
-# V1 Test Results
-
-Successfully demonstrated during development:
-
-- Greeting
-- Recipe creation
-- Step-by-step cooking
-- Natural navigation
-- Cooking questions
-- Ingredient substitutions
-- State preservation during common modifications
-- Timer creation
-- Timer status
-- Timer cancellation
-- Automatic timer-expiry voice announcement
-- Recipe completion
-
----
-
-# Known V1 Limitations
-
-## Complex plan modifications
-
-Complex modifications can expose recipe-plan consistency problems.
-
-Reflection and validation functionality exists, but deeper integration and testing is a future improvement.
-
-## Essential ingredients
-
-The agent should distinguish optional ingredients from essential ingredients.
-
-For example:
-
-```text
-"I don't have cilantro."
-```
-
-can usually be handled with omission or substitution.
-
-But:
-
-```text
-"Can I make fried rice without rice?"
-```
-
-should not blindly transform the dish while still calling it fried rice.
-
-## Voice ingredient lists
-
-Ingredient requests can become too verbose.
-
-A future version should provide a dedicated concise ingredient-list response.
-
-## Voice summaries
-
-Recipe summaries can become too long.
-
-A future version should provide a dedicated voice-native summary.
-
-## Complex multi-action commands
-
-Commands such as:
-
-```text
-"Cancel the timer and move to the next step."
-```
-
-may require explicit multi-action orchestration.
-
----
-
-# Development Philosophy
-
-The project separates:
-
-```text
-Interface
-    ↓
-Cooking Agent
-    ↓
-Tools / State / Plan
-```
-
-Current interfaces:
-
-```text
-                 Kitchen Agent
-                       │
-              ┌────────┴────────┐
-              │                 │
-           Terminal            Voice
-```
-
-The cooking backend should remain independent from the interface.
-
----
-
-# Cost and Latency
-
-The project tries to avoid unnecessary LLM calls.
-
-Deterministic commands such as:
-
-```text
-next
-done
-cancel timer
-```
-
-can be handled directly by Python.
-
-This reduces:
-
-- API usage
-- Cost
-- Latency
-- State errors
-
-The voice bridge also avoids adding a second LLM merely to summarize every response.
-
----
-
-# Security
-
-Never commit:
-
-```text
-.env
-API keys
-LiveKit API secrets
-Deepgram API keys
-Rime API keys
-OpenAI API keys
-```
-
-Before pushing:
-
-```powershell
-git status
-```
-
-Check that `.env` is not staged.
-
-Then inspect:
-
-```powershell
-git diff --cached
-```
-
----
-
-# Git Workflow
-
-```powershell
-git status
-git add .
-git status
-git diff --cached
-git commit -m "Describe the change"
-git push origin main
-```
-
----
-
-# Quick Start for Future Me
-
-## Terminal
-
-```powershell
-cd C:\Users\SRI SARVESH\Documents\kitchen_agent
-.\myenv\Scripts\Activate.ps1
-python main.py
-```
-
-## Voice
-
-```powershell
-cd C:\Users\SRI SARVESH\Documents\kitchen_agent
-.\myenv\Scripts\Activate.ps1
-python voice/voice_shell.py dev
-```
-
-## Install dependencies
-
-```powershell
-pip install -r requirements.txt
-```
-
-## Git
-
-```powershell
-git status
-git add .
-git commit -m "Describe the change"
-git push origin main
-```
-
----
-
-# Quick Reference
-
-| Task | Command |
-|---|---|
-| Create environment | `python -m venv myenv` |
-| Activate environment | `.\myenv\Scripts\Activate.ps1` |
-| Install packages | `pip install -r requirements.txt` |
-| Run terminal agent | `python main.py` |
-| Run voice agent | `python voice/voice_shell.py dev` |
-| CLI help | `python voice/voice_shell.py --help` |
-| Git status | `git status` |
-| Stage | `git add .` |
-| Commit | `git commit -m "message"` |
-| Push | `git push origin main` |
-
----
+------------------------------------------------------------------------
 
 # Project
 
-**Kitchen Agent — Voice-Native AI Cooking Assistant**
+## Kitchen Agent --- Voice-Native AI Cooking Assistant
 
-Repository:
+Focus:
 
-https://github.com/Funda002/cooking_assistance_agent
-
-Focus areas:
-
-- AI-agent architecture
-- Structured planning
-- State management
-- Tool use
-- Dynamic recipe adaptation
-- Voice interaction
-- Real-time cooking assistance
-
----
-
-# License
-
-Add the project's chosen license before public release if the project is intended for reuse.
-
-For a hackathon repository, explicitly choosing an appropriate open-source license is recommended.
+-   AI Agent Architecture
+-   Planning
+-   State Management
+-   Tool Usage
+-   Voice Interaction
+-   Real-time Assistance
